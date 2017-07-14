@@ -163,10 +163,7 @@ as well. Those responsibilities include (but are not limited to):
 
 ## Calling the CLI
 
-    % sim -h
-
-NOTE: This project is currently in WIP. The command line does not currently do
-much of anything, save for output help.
+    % maestro <some path to a YAML specification>
 
 ----------------
 
