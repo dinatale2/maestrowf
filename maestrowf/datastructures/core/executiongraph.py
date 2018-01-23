@@ -4,6 +4,7 @@ import getpass
 import logging
 import os
 import pickle
+from collections import deque
 
 from maestrowf.abstracts.enums import JobStatusCode, State, SubmissionCode, \
     CancelCode
@@ -215,12 +216,14 @@ class ExecutionGraph(DAG):
     where that would go.
     """
 
-    def __init__(self, submission_attempts=1):
+    def __init__(self, submission_attempts=1, submission_throttle=0):
         """
         Initialize a new instance of an ExecutionGraph.
 
         :param submission_attempts: Number of attempted submissions before
         marking a step as failed.
+        :param submission_throttle: Maximum number of scheduled in progress
+        submissions.
         """
         super(ExecutionGraph, self).__init__()
         # Member variables for execution.
@@ -231,10 +234,12 @@ class ExecutionGraph(DAG):
         self.completed_steps = set([SOURCE])
         self.in_progress = set()
         self.failed_steps = set()
+        self.ready_steps = deque()
 
         # Values for management of the DAG. Things like submission attempts,
         # throttling, etc. should be listed here.
         self._submission_attempts = submission_attempts
+        self._submission_throttle = submission_throttle
 
     def add_step(self, name, step, workspace, restart_limit):
         """
@@ -642,18 +647,25 @@ class ExecutionGraph(DAG):
                 # as the number of dependencies the step has, it's ready to
                 # be executed. Add it to the map.
                 if num_finished == len(record.step.run["depends"]):
-                    logger.debug("All dependencies completed. Staging.")
-                    ready_steps[key] = record
+                    if key not in self.ready_steps:
+                        logger.debug("All dependencies completed. Staging.")
+                        ready_steps.append(record)
+                    else:
+                        logger.debug("Already staged. Passing.")
+                        continue
 
         # We now have a collection of ready steps. Execute.
-        for key, record in ready_steps.items():
-            logger.info("Executing -- '%s'\nScript path = %s", key,
+        while self.ready_steps \
+            and len(self.in_progress) < self._submission_throttle:
+
+            record = self.ready_steps.popleft()
+            logger.info("Executing -- '%s'\nScript path = %s", record.name,
                         record.script)
             logger.debug(
                 "Attempting to execute '%s' -- Current state is %s.",
                 record.name, record.status
             )
-            self._execute_record(key, record)
+            self._execute_record(record)
             logger.debug(
                 "After execution of '%s' -- New state is %s.",
                 record.name, record.status
