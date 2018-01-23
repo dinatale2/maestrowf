@@ -397,7 +397,7 @@ class ExecutionGraph(DAG):
             record.script = cmd_script
             record.restart_script = restart_script
 
-    def _execute_record(self, name, record, restart=False):
+    def _execute_record(self, record, restart=False):
         """
         Execute a StepRecord.
 
@@ -434,14 +434,15 @@ class ExecutionGraph(DAG):
         while retcode != SubmissionCode.OK and \
                 num_restarts < self._submission_attempts:
             logger.info("Attempting submission of '%s' (attempt %d of %d)...",
-                        name, num_restarts + 1, self._submission_attempts)
+                        record.name, num_restarts + 1,
+                        self._submission_attempts)
 
             # If not a restart, submit the cmd script.
             if not restart:
                 logger.debug(
                     "'%s' is not restarting -- Marking as SUBMITTED from %s "
                     "at %s",
-                    name,
+                    record.name,
                     record.status,
                     str(datetime.now())
                 )
@@ -452,7 +453,7 @@ class ExecutionGraph(DAG):
                     logger.debug(
                         "'%s' running locally -- Marking as RUNNING from %s "
                         "at %s",
-                        name,
+                        record.name,
                         record.status,
                         str(datetime.now())
                     )
@@ -475,21 +476,22 @@ class ExecutionGraph(DAG):
             num_restarts += 1
 
         if retcode == SubmissionCode.OK:
-            logger.info("'%s' submitted with identifier '%s'", name, jobid)
+            logger.info("'%s' submitted with identifier '%s'",
+                        record.name, jobid)
             record.jobid.append(jobid)
-            self.in_progress.add(name)
+            self.in_progress.add(record.name)
 
             # Executed locally, so if we executed OK -- Finished.
             if record.to_be_scheduled is False:
                 record.mark_end(State.FINISHED)
-                self.completed_steps.add(name)
-                self.in_progress.remove(name)
+                self.completed_steps.add(record.name)
+                self.in_progress.remove(record.name)
         else:
             # Find the subtree, because anything dependent on this step now
             # failed.
             logger.warning("'%s' failed to properly submit properly. "
-                           "Step failed.", name)
-            path, parent = self.bfs_subtree(name)
+                           "Step failed.", record.name)
+            path, parent = self.bfs_subtree(record.name)
             for node in path:
                 self.failed_steps.add(node)
                 self.values[node].mark_end(State.FAILED)
