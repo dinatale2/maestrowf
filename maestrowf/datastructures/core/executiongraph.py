@@ -405,6 +405,14 @@ class ExecutionGraph(DAG):
         :param record: An instance of a _StepRecord class.
         :param restart: True if the record needs restarting, False otherwise.
         """
+        # Logging for debugging.
+        logger.info("Executing -- '%s'\nScript path = %s", record.name,
+                    record.script)
+        logger.debug(
+            "Attempting to execute '%s' -- Current state is %s.",
+            record.name, record.status
+        )
+
         num_restarts = 0    # Times this step has temporally restarted.
         retcode = None      # Execution return code.
 
@@ -485,6 +493,12 @@ class ExecutionGraph(DAG):
             for node in path:
                 self.failed_steps.add(node)
                 self.values[node].mark_end(State.FAILED)
+
+        # After execution state debug logging.
+        logger.debug(
+            "After execution of '%s' -- New state is %s.",
+            record.name, record.status
+        )
 
     def write_status(self, path):
         header = "Step Name,Workspace,State,Run Time,Elapsed Time,Start Time" \
@@ -649,27 +663,35 @@ class ExecutionGraph(DAG):
                 if num_finished == len(record.step.run["depends"]):
                     if key not in self.ready_steps:
                         logger.debug("All dependencies completed. Staging.")
-                        ready_steps.append(record)
+                        self.ready_steps.append(record)
                     else:
                         logger.debug("Already staged. Passing.")
                         continue
 
         # We now have a collection of ready steps. Execute.
-        while self.ready_steps \
-            and len(self.in_progress) < self._submission_throttle:
+        # If we don't have a submission limit, go ahead and submit all.
+        if not self._submission_throttle:
+            while self.ready_steps:
+                logger.info("Launching all ready steps...")
+                # Pop the record and execute using the helper method.
+                _record = self.ready_steps.popleft()
+                self._execute_record(_record)
 
-            record = self.ready_steps.popleft()
-            logger.info("Executing -- '%s'\nScript path = %s", record.name,
-                        record.script)
-            logger.debug(
-                "Attempting to execute '%s' -- Current state is %s.",
-                record.name, record.status
-            )
-            self._execute_record(record)
-            logger.debug(
-                "After execution of '%s' -- New state is %s.",
-                record.name, record.status
-            )
+        # Else, we have a limit -- adhere to it.
+        else:
+            # Compute the number of available slots we have for execution.
+            _available = self._submission_throttle - len(self.in_progress)
+            # This check shouldn't be necessary, but we should safeguard
+            # the loop against cases where we may inadvertedly launch more
+            # than allowed.
+            logger.info("Found %d available slots...", _available)
+            if _available > 0:
+                logger.debug("Available slots are greater than zero.")
+                for i in range(0, _available):
+                    # Pop the record and execute using the helper method.
+                    _record = self.ready_steps.popleft()
+                    logger.debug("Launching job %d -- %s", i, _record.name)
+                    self._execute_record(_record)
 
         return False
 
